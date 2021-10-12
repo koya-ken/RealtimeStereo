@@ -173,14 +173,15 @@ class RTStereoNet(nn.Module):
 
         if x.is_cuda:
             vgrid = grid.cuda()
+
         #vgrid = grid
-        vgrid[:,:1,:,:] = vgrid[:,:1,:,:] - disp
+        vgrid = torch.cat([vgrid[:,:1,:,:] - disp,vgrid[:,[1],:,:]],axis=1)
 
         # scale grid to [-1,1]
-        vgrid[:, 0, :, :] = 2.0 * vgrid[:, 0, :, :] / max(W - 1, 1) - 1.0
-        vgrid[:, 1, :, :] = 2.0 * vgrid[:, 1, :, :] / max(H - 1, 1) - 1.0
+        vgrid = torch.cat([2.0 * vgrid[:, [0], :, :] / max(W - 1, 1) - 1.0, 2.0 * vgrid[:, [1], :, :] / max(H - 1, 1) - 1.0],axis=1)
 
         vgrid = vgrid.permute(0, 2, 3, 1)
+
         output = nn.functional.grid_sample(x, vgrid)
         return output
 
@@ -189,12 +190,34 @@ class RTStereoNet(nn.Module):
         assert maxdisp % stride == 0  # Assume maxdisp is multiple of stride
         b,c,h,w = feat_l.size()
         cost = torch.zeros(b, 1, maxdisp//stride, h, w).cuda().requires_grad_(False)
+        dim1,dim2,dim3,dim4,dim5 = cost.shape
         for i in range(0, maxdisp, stride):
             if i > 0:
-                cost[:, :, i//stride, :, i:] = torch.norm(feat_l[:, :, :, i:] - feat_r[:, :, :, :-i], p=1, dim = 1,keepdim=True)
+                tmp_cost = []
+                for j in range(dim3):
+                    if j == (i // stride):
+                        tmp1 = cost[:, :, [j], :, :i]
+                        tmp2 = torch.norm(feat_l[:, :, :, i:] - feat_r[:, :, :, :-i], p=1, dim = 1,keepdim=True)
+                        tmp2 = tmp2.unsqueeze(2)
+                        tmp_cost.append(torch.cat([tmp1,tmp2],axis=4))
+                    else:
+                        tmp = cost[:, :, [j], :, :]
+                        tmp_cost.append(tmp)
+                cost = torch.cat(tmp_cost,axis=2)
             else:
-                cost[:, :, i//stride, :, i:] = torch.norm(feat_l[:, :, :, :] - feat_r[:, :, :, :], p=1,  dim =1,keepdim=True)
+                tmp_cost = []
+                for j in range(dim3):
+                    if j == (i // stride):
+                        tmp1 = cost[:, :, [j], :, :i]
+                        tmp2 = torch.norm(feat_l[:, :, :, :] - feat_r[:, :, :, :], p=1,  dim =1,keepdim=True)
+                        tmp2 = tmp2.unsqueeze(2)
+                        tmp_cost.append(torch.cat([tmp1,tmp2],axis=4))
+                    else:
+                        tmp = cost[:, :, [j], :, :]
+                        tmp_cost.append(tmp)
+                cost = torch.cat(tmp_cost,axis=2)
         return cost.contiguous()
+
 
     def _build_volume_2d3(self, feat_l, feat_r, maxdisp, disp, stride=1):
         b,c,h,w = feat_l.size()
